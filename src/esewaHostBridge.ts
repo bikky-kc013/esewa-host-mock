@@ -220,10 +220,74 @@ async function onRequestApp(rawData: string, opts: HostOptions) {
 }
 
 // ---------------------------------------------------------------------------
+// Desktop shim — make library think it's on Android so callbacks are stored
+// Must run BEFORE esewa-ui-library is imported (its isAndroid is evaluated at import)
+// ---------------------------------------------------------------------------
+function spoofDesktopUA(): void {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return;
+  try {
+    const ua = navigator.userAgent;
+    if (!/Android|iPhone|iPad|iPod|wv|Flutter/i.test(ua)) {
+      Object.defineProperty(window.navigator, 'userAgent', {
+        value: ua + ' Android',
+        configurable: true,
+      });
+      console.info('[eSewa Host] Spoofed navigator.userAgent (+Android) for desktop library');
+    }
+  } catch {}
+}
+
+function patchLibraryRuntime(): void {
+  // If library already loaded, its isAndroid was evaluated with old UA.
+  // Patch its exported function to fallback to window.requestFromMiniApp / direct dispatch.
+  try {
+    // dynamic import — if mini-app hasn't imported library yet, this will load it
+    import('esewa-ui-library')
+      .then((lib: any) => {
+        if (!lib || typeof lib.requestFromMiniApp !== 'function' || lib.__HOST_PATCHED__) return;
+        const orig = lib.requestFromMiniApp;
+        lib.requestFromMiniApp = (data: any, cb?: (d: any) => void) => {
+          const w: any = window;
+          // ensure callback is stored even when UA didn't match at orig's import time
+          if (cb && data?.callbackKey) {
+            w.Android = w.Android || {};
+            w.Android[data.callbackKey] = cb;
+            w.iOSNative = w.iOSNative || {};
+            w.iOSNative[data.callbackKey] = cb;
+            w.flutter_inappwebview = w.flutter_inappwebview || {};
+            w.flutter_inappwebview[data.callbackKey] = cb;
+          }
+          // Try original first; it will call CONNECT_APP which we have shimmed to onRequestApp
+          try {
+            // If orig's isAndroid is still false, it won't store callback and will warn.
+            // We already stored it above, so just ensure CONNECT_APP forwards.
+            // Call orig if it will actually transport; otherwise bypass and call our bridge directly.
+            if (/Android/i.test(navigator.userAgent)) {
+              return orig(data, cb);
+            }
+            // desktop fallback — directly invoke bridge
+            void onRequestApp(JSON.stringify(data), (w as any).__ESEWA_HOST_OPTS__ || {});
+          } catch (e) {
+            console.warn('[eSewa Host] patched requestFromMiniApp fallback', e);
+            if (typeof w.requestFromMiniApp === 'function') w.requestFromMiniApp(data, cb);
+          }
+        };
+        lib.__HOST_PATCHED__ = true;
+        console.info('[eSewa Host] Patched esewa-ui-library.requestFromMiniApp for desktop');
+      })
+      .catch(() => {});
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
 // Public installer — call before Mini App loads
 // ---------------------------------------------------------------------------
 export function installEsewaHost(opts: HostOptions = {}): void {
   const w = window as any;
+  w.__ESEWA_HOST_OPTS__ = opts;
+
+  // desktop UA spoof must happen before any library code runs
+  spoofDesktopUA();
 
   // 1) Native WebView globals the library actually uses (dist/index.js:7977-8001)
   w.Android = w.Android || {};
@@ -238,21 +302,18 @@ export function installEsewaHost(opts: HostOptions = {}): void {
 
   w.webkit = w.webkit || {};
   w.webkit.messageHandlers = w.webkit.messageHandlers || {};
-  w.webkit.messageHandlers.iOSNative = w.webkit.messageHandlers.iOSNative || {
+  // capture previous before overwriting
+  const prevIOS = w.webkit.messageHandlers.iOSNative;
+  const existingPostMessage = prevIOS?.postMessage;
+  w.webkit.messageHandlers.iOSNative = {
     postMessage: (data: any) => {
+      if (typeof existingPostMessage === 'function') {
+        try { existingPostMessage.call(prevIOS, data); } catch {}
+      }
       const str = typeof data === 'string' ? data : JSON.stringify(data);
       void onRequestApp(str, opts);
     },
   };
-  // preserve existing postMessage if native already injected
-  const existingPostMessage = w.webkit.messageHandlers.iOSNative.postMessage;
-  if (existingPostMessage && existingPostMessage !== w.webkit.messageHandlers.iOSNative.postMessage) {
-    w.webkit.messageHandlers.iOSNative.postMessage = (data: any) => {
-      try { existingPostMessage.call(w.webkit.messageHandlers.iOSNative, data); } catch {}
-      const str = typeof data === 'string' ? data : JSON.stringify(data);
-      void onRequestApp(str, opts);
-    };
-  }
 
   w.flutter_inappwebview = w.flutter_inappwebview || {};
   const existingFlutter = w.flutter_inappwebview.callHandler;
@@ -265,6 +326,9 @@ export function installEsewaHost(opts: HostOptions = {}): void {
       void onRequestApp(str, opts);
     }
   };
+
+  // Patch already-loaded library for desktop
+  patchLibraryRuntime();
 
   // 2) Legacy / web-only fallback: expose window.requestFromMiniApp directly
   //    Some tutorials/mocks use this name. The library itself does NOT use it,
@@ -298,20 +362,13 @@ export function installEsewaHost(opts: HostOptions = {}): void {
   //    Host (this window) listens:
   window.addEventListener('message', (ev: MessageEvent) => {
     if (ev.data?.esewaBridge && ev.data?.data) {
-      const source = ev.source as Window | null;
-      const callbackKey = (() => { try { return JSON.parse(ev.data.data).callbackKey; } catch { return null; } })();
-      void onRequestApp(ev.data.data, opts).then(() => {
-        // For iframe case, dispatch via postMessage back if no direct callback slot
-        // The iframe's shim should listen for this reply
-      });
-      // Also attempt direct dispatch if callback was stored on this window (same-origin iframe)
-      if (callbackKey && source) {
-        // no-op — dispatchToMiniApp already tried window slots; iframe needs its own listener
-      }
+      void onRequestApp(ev.data.data, opts);
     }
   });
 
   console.info('[eSewa Host] Bridge installed', { hasNativeAndroid: !!existingAndroidRequestApp });
+  // Mark installed to prevent double-install
+  w.__ESEWA_HOST_INSTALLED__ = true;
 }
 
 export function resetHostSession(): void {

@@ -1,269 +1,252 @@
-import { useEffect, useState } from 'react';
-import { REQUEST_TYPE_ENUM, CALLBACK_TYPE_ENUM } from '../mockEsewaHost';
-import { MockHostPanel } from '../MockHostPanel';
+/**
+ * App.tsx — Host shell with three views: discovery | onboarding | miniapp
+ * Persistent dev nav (eSewa Home / Partner Console) outside phone shell
+ * DevPanel stays mounted in all views so bridge logs persist.
+ */
 
-declare global {
-  function requestFromMiniApp(requestData: any, callback?: (data: any) => void): void;
+import React, { useEffect, useState } from 'react';
+import { ESewaProvider, ESewaThemeProvider, useESewaDataProvider } from 'esewa-ui-library';
+import { PhoneShell } from './host/PhoneShell';
+import { DevPanel } from './host/DevPanel';
+import { DiscoveryFeed } from './host/DiscoveryFeed';
+import { OnboardingConsole } from './host/onboarding/OnboardingConsole';
+import SampleMiniApp from './miniapp/SampleMiniApp';
+import { getApp } from './host/onboarding/store';
+import styled from 'styled-components';
+import { gray, primary, white, bluegray } from './host/tokens';
+
+type AppView = 'discovery' | 'onboarding' | 'miniapp';
+
+const TopNav = styled.nav`
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: ${white};
+  border-bottom: 1px solid ${bluegray[100]};
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+`;
+
+const NavBtn = styled.button<{ $active?: boolean }>`
+  border: 1px solid ${(p) => (p.$active ? gray[900] : bluegray[100])};
+  background: ${(p) => (p.$active ? gray[900] : white)};
+  color: ${(p) => (p.$active ? white : gray[500])};
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+`;
+
+function TitleObserver({ onChange }: { onChange: (t: string) => void }) {
+  const { data } = useESewaDataProvider();
+  useEffect(() => {
+    if (data?.title) onChange(String(data.title));
+  }, [data?.title, onChange]);
+  return null;
 }
 
 export default function App() {
-  const [token, setToken] = useState<string | null>(sessionStorage.getItem('miniAppAuthToken'));
-  const [log, setLog] = useState<string>(
-    'Click INIT_APP first. Open browser console for [Mock eSewa Host] logs.',
-  );
-  const [dataView, setDataView] = useState<any>(null);
+  const [view, setView] = useState<AppView>('discovery');
+  const [activeAppId, setActiveAppId] = useState<string | null>(null);
+  const [debugTitle, setDebugTitle] = useState<string>('');
 
   useEffect(() => {
-    // Auto INIT on mount like real Mini App does
-    const initApp = () => {
-      requestFromMiniApp(
-        {
-          merchant_identifier: 'IAAAAABTOBAbFhAXHhEHAgoXX0FRR1FJJiw3LCwkJzE=',
-          requestType: REQUEST_TYPE_ENUM.INIT_APP,
-          callbackKey: CALLBACK_TYPE_ENUM.INIT_APP_CALLBACK,
-        },
-        (data) => {
-          try {
-            const res = JSON.parse(data);
-            if (res.error_message) {
-              setLog(`INIT_APP error: ${res.error_message}`);
-              return;
-            }
-            sessionStorage.setItem('miniAppAuthToken', res.token);
-            sessionStorage.setItem('miniAppAuthScope', JSON.stringify(res.scope));
-            setToken(res.token);
-            setDataView(res);
-            setLog(
-              `INIT_APP success: token ${res.token.slice(0, 16)}... scope [${res.scope.join(', ')}]`,
-            );
-          } catch (e) {
-            setLog(`INIT_APP parse error: ${e}`);
-          }
-        },
-      );
-    };
-    initApp();
-  }, []);
+    const t = document.documentElement.getAttribute('data-theme');
+    if (t !== 'light') {
+      console.info('[Host] data-theme is', t, '— expected light after forceLightTheme patch');
+    }
+  }, [view]);
 
-  const call = (requestType: string, extra: any = {}, isRaw = false) => {
-    const t = sessionStorage.getItem('miniAppAuthToken');
-    setLog(`Calling ${requestType}... (token: ${t ? t.slice(0, 8) + '...' : 'none'})`);
-    requestFromMiniApp(
-      {
-        requestType,
-        token: t,
-        callbackKey: `${requestType}_CALLBACK`,
-        merchant_identifier: 'IAAAAABTOBAbFhAXHhEHAgoXX0FRR1FJJiw3LCwkJzE=',
-        ...extra,
-      },
-      (data) => {
-        if (isRaw) {
-          if ((data as any)?.error_message) {
-            setLog(`${requestType} error: ${(data as any).error_message}`);
-            setDataView(data);
-          } else {
-            const preview =
-              typeof data === 'string'
-                ? `${data.slice(0, 80)}... (${data.length} chars)`
-                : JSON.stringify(data, null, 2);
-            setLog(`${requestType} success (raw): ${preview.slice(0, 120)}`);
-            setDataView(data);
-          }
-        } else {
-          try {
-            const res = JSON.parse(data);
-            if (res.error_message) {
-              setLog(`${requestType} error: ${res.error_message}`);
-            } else {
-              setLog(`${requestType} success`);
-            }
-            setDataView(res);
-          } catch (e) {
-            setLog(`${requestType} parse error: ${e} raw=${String(data).slice(0, 100)}`);
-            setDataView(data);
-          }
-        }
-      },
-    );
-  };
+  const activeApp = activeAppId ? getApp(activeAppId) : null;
 
-  const btn: React.CSSProperties = {
-    padding: '8px 14px',
-    borderRadius: 8,
-    border: '1px solid #ddd',
-    background: '#fff',
-    cursor: 'pointer',
-    fontWeight: 600,
-  };
-  const btnPrimary: React.CSSProperties = {
-    ...btn,
-    background: '#60a5fa',
-    color: '#0f172a',
-    borderColor: '#60a5fa',
+  const handleLaunch = (appId: string) => {
+    setActiveAppId(appId);
+    setView('miniapp');
   };
 
   return (
-    <div
-      style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 860, margin: '0 auto', padding: 24 }}
-    >
-      <h1 style={{ margin: 0 }}>eSewa Mini App — Mock Host Playground</h1>
-      <p style={{ opacity: 0.7, marginTop: 6 }}>
-        Mock from <code>mockEsewaHost.ts</code> is active in DEV only. Check console for{' '}
-        <code>[Mock eSewa Host]</code> logs (300-800ms latency).
-      </p>
-
-      <div
-        style={{
-          background: '#111827',
-          color: '#f9fafb',
-          padding: 12,
-          borderRadius: 10,
-          fontSize: 13,
-          fontFamily: 'monospace',
-          wordBreak: 'break-all',
-        }}
-      >
-        token: {token ? `${token.slice(0, 24)}...` : 'none — call INIT_APP'} | scope:{' '}
-        {(sessionStorage.getItem('miniAppAuthScope') || '[]').slice(0, 80)}
-      </div>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
-        <button
-          style={btnPrimary}
-          onClick={() => call(REQUEST_TYPE_ENUM.INIT_APP, { merchant_identifier: 'IAAAAAB...' })}
-        >
-          INIT_APP
-        </button>
-        <button style={btn} onClick={() => call(REQUEST_TYPE_ENUM.USER_DETAIL_ACCESS)}>
-          USER_DETAIL
-        </button>
-        <button style={btn} onClick={() => call(REQUEST_TYPE_ENUM.LOCATION_ACCESS)}>
-          LOCATION
-        </button>
-        <button style={btn} onClick={() => call(REQUEST_TYPE_ENUM.MEDIA_ACCESS, {}, true)}>
-          MEDIA (raw)
-        </button>
-        <button style={btn} onClick={() => call(REQUEST_TYPE_ENUM.VALIDATE_TRANSACTION)}>
-          VALIDATE_TXN
-        </button>
-        <button
-          style={btn}
-          onClick={() =>
-            call(REQUEST_TYPE_ENUM.REQUEST_PAYMENT, {
-              data: {
-                product_code: 'NP-ES-VIANET',
-                amount: 28.48,
-                properties: { productId: '3299', refId: '400005' },
-                channel: 'WEB_USER',
-              },
-            })
-          }
-        >
-          REQUEST_PAYMENT
-        </button>
-        <button style={btn} onClick={() => call(REQUEST_TYPE_ENUM.GET_PRODUCT)}>
-          GET_PRODUCT
-        </button>
-        <button
-          style={btn}
-          onClick={() => call(REQUEST_TYPE_ENUM.VALIDATE_USER, { data: { esewa_id: 9847474747 } })}
-        >
-          VALIDATE_USER
-        </button>
-        <button style={btn} onClick={() => call(REQUEST_TYPE_ENUM.MERCHANT_DETAIL)}>
-          MERCHANT_DETAIL
-        </button>
-        <button style={btn} onClick={() => call(REQUEST_TYPE_ENUM.QR_SCANNER_ACCESS)}>
-          QR_SCANNER
-        </button>
-        <button
-          style={btn}
-          onClick={() =>
-            call(
-              REQUEST_TYPE_ENUM.FILE_DOWNLOAD_ACCESS,
-              {
-                data: {
-                  fileName: 'Statement-2025.pdf',
-                  type: 'url',
-                  content: 'https://www.aeee.in/wp-content/uploads/2020/08/Sample-pdf.pdf',
-                },
-              },
-              true,
-            )
-          }
-        >
-          FILE_DOWNLOAD (raw)
-        </button>
-        <button
-          style={{ ...btn, background: '#fee2e2' }}
-          onClick={() => call(REQUEST_TYPE_ENUM.CLOSE_APP, {}, true)}
-        >
-          CLOSE_APP
-        </button>
-      </div>
-
-      <div
-        style={{
-          marginTop: 16,
-          padding: 12,
-          background: '#f8fafc',
-          border: '1px solid #e2e8f0',
-          borderRadius: 10,
-          minHeight: 60,
-        }}
-      >
-        <div
-          style={{
-            fontWeight: 700,
-            fontSize: 12,
-            opacity: 0.6,
-            textTransform: 'uppercase',
-            letterSpacing: 0.5,
-          }}
-        >
-          Last callback
-        </div>
-        <div style={{ fontSize: 13, marginTop: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-          {log}
-        </div>
-        {dataView && (
-          <pre
-            style={{
-              marginTop: 10,
-              background: '#fff',
-              padding: 10,
-              borderRadius: 8,
-              border: '1px solid #e2e8f0',
-              overflow: 'auto',
-              maxHeight: 300,
-              fontSize: 12,
-            }}
-          >
-            {typeof dataView === 'string'
-              ? dataView.slice(0, 2000)
-              : JSON.stringify(dataView, null, 2)}
-          </pre>
+    <>
+      <TopNav>
+        <span style={{ fontWeight: 800, fontSize: 13, color: gray[900], marginRight: 6 }}>Dev Nav</span>
+        <NavBtn $active={view === 'discovery'} onClick={() => setView('discovery')}>eSewa Home</NavBtn>
+        <NavBtn $active={view === 'onboarding'} onClick={() => setView('onboarding')}>Partner Console</NavBtn>
+        {view === 'miniapp' && activeApp && (
+          <span style={{ fontSize: 11, color: gray[100], marginLeft: 8 }}>
+            Active: <b style={{ color: primary[500] }}>{activeApp.name}</b> ({activeApp.merchant_identifier})
+          </span>
         )}
-      </div>
+        {view === 'miniapp' && (
+          <NavBtn onClick={() => setView('discovery')} style={{ marginLeft: 'auto' }}>← Back to Home</NavBtn>
+        )}
+      </TopNav>
 
-      <div style={{ marginTop: 16, fontSize: 12, opacity: 0.6, lineHeight: 1.6 }}>
-        <div>
-          • Most callbacks return JSON string → `JSON.parse(data)`. Exceptions: `MEDIA_ACCESS`
-          (base64 string), `FILE_DOWNLOAD_ACCESS`/`CLOSE_APP` (raw object) — see
-          README-mock-host.md.
-        </div>
-        <div>
-          • Token gating: before INIT_APP calls fail with{' '}
-          <code>{"{ error_message: 'Token not found...' }"}</code>. Scope gating via panel.
-        </div>
-        <div>
-          • Disable mock: <code>?mockEsewa=0</code> or{' '}
-          <code>localStorage.setItem('mockEsewaDisabled','1')</code> then reload.
-        </div>
-      </div>
+      {view === 'discovery' && (
+        <>
+          <DiscoveryFeed onLaunchMiniApp={handleLaunch} onOpenOnboarding={() => setView('onboarding')} />
+          <DevPanel />
+        </>
+      )}
 
-      {/* Floating dev panel - only in DEV */}
-      {import.meta.env.DEV && <MockHostPanel />}
-    </div>
+      {view === 'onboarding' && (
+        <>
+          <OnboardingConsole
+            onGoDiscovery={() => setView('discovery')}
+            onForceLaunch={(id) => {
+              setActiveAppId(id);
+              setView('miniapp');
+            }}
+          />
+          <DevPanel />
+        </>
+      )}
+
+      {view === 'miniapp' && (
+        <ESewaThemeProvider>
+          <ESewaProvider>
+            <PhoneShell debugTitle={debugTitle} onBackToDiscovery={() => setView('discovery')}>
+              {activeApp ? (
+                activeApp.launchMode === 'iframe' && activeApp.launchUrl ? (
+                  <IframeMiniApp app={activeApp} />
+                ) : (
+                  <SampleMiniApp
+                    merchantIdentifier={activeApp.merchant_identifier}
+                    vendorIdentifier={activeApp.vendorIdentifier}
+                  />
+                )
+              ) : (
+                <div style={{ padding: 20, fontSize: 13 }}>No app selected.</div>
+              )}
+              <TitleObserver onChange={setDebugTitle} />
+            </PhoneShell>
+            <DevPanel />
+          </ESewaProvider>
+        </ESewaThemeProvider>
+      )}
+    </>
+  );
+}
+
+/**
+ * Iframe launch — same-origin host bridge injection (Task 3.4 option a)
+ */
+function IframeMiniApp({ app }: { app: NonNullable<ReturnType<typeof getApp>> }) {
+  const ref = React.useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    const iframe = ref.current;
+    if (!iframe) return;
+    const onLoad = () => {
+      try {
+        const win = iframe.contentWindow as any;
+        if (!win) return;
+        // Inject same bridge logic into iframe's window
+        // We reuse the parent's bridge installer by calling it against iframe window
+        // To avoid duplicating code, we forward the parent's bridge handlers via postMessage fallback:
+        // For same-origin, we can directly install by copying the parent's bridge functions
+        // Simplest: if iframe window doesn't have Android, install a forwarder that postMessages to parent
+        // But parent already listens for postMessage? Not yet — we do direct install approach (a).
+
+        // Direct install: replicate installHostBridge against iframe window object
+        // We can't import installHostBridge with different window, so we manually patch iframe window to forward to parent bridge
+        const parentBridge = (window as any).__ESEWA_HOST__;
+        if (!parentBridge) return;
+
+        // Ensure iframe has the three transports that forward to parent's onOutgoing via postMessage or direct call
+        // Since iframe is same-origin, we can share the parent's bridge state by forwarding raw JSON to parent's handler
+        win.Android = win.Android || {};
+        const origAndroid = win.Android.requestApp;
+        win.Android.requestApp = (data: string) => {
+          // Forward to parent's bridge
+          try {
+            // call parent's internal onOutgoing via dispatching to parent window's Android shim
+            (window as any).Android.requestApp(data);
+          } catch {}
+          if (typeof origAndroid === 'function' && origAndroid !== win.Android.requestApp) {
+            try { origAndroid.call(win.Android, data); } catch {}
+          }
+        };
+
+        win.webkit = win.webkit || {};
+        win.webkit.messageHandlers = win.webkit.messageHandlers || {};
+        win.webkit.messageHandlers.iOSNative = win.webkit.messageHandlers.iOSNative || {};
+        const origIOS = win.webkit.messageHandlers.iOSNative.postMessage;
+        win.webkit.messageHandlers.iOSNative.postMessage = (data: any) => {
+          const str = typeof data === 'string' ? data : JSON.stringify(data);
+          try { (window as any).webkit.messageHandlers.iOSNative.postMessage(str); } catch {}
+          if (typeof origIOS === 'function' && origIOS !== win.webkit.messageHandlers.iOSNative.postMessage) {
+            try { origIOS.call(win.webkit.messageHandlers.iOSNative, data); } catch {}
+          }
+        };
+
+        win.flutter_inappwebview = win.flutter_inappwebview || {};
+        const origFlutter = win.flutter_inappwebview.callHandler;
+        win.flutter_inappwebview.callHandler = (handlerName: string, data: any) => {
+          if (handlerName === 'eSewaHandler') {
+            const str = typeof data === 'string' ? data : JSON.stringify(data);
+            try { (window as any).flutter_inappwebview.callHandler(handlerName, str); } catch {}
+          }
+          if (typeof origFlutter === 'function' && origFlutter !== win.flutter_inappwebview.callHandler) {
+            try { origFlutter.call(win.flutter_inappwebview, handlerName, data); } catch {}
+          }
+        };
+
+        // Also mirror callback slots: when parent fires response, it looks for window.Android[callbackKey] in parent window.
+        // For iframe, we need to propagate parent's callback invocation into iframe's window.
+        // We do this by intercepting fireResponse to also check iframe window.
+        // Simpler: monkey-patch parent's fireResponse to also try iframe window — but we can instead
+        // make iframe's Android object proxy to parent's Android object for callbacks
+        // So when parent does window.Android[cb](envelope), iframe's code sees same function because we share reference
+        // We achieve sharing by making iframe's Android === parent's Android for callback keys
+        // Instead, we sync: whenever library in iframe does window.Android[cb]=fn, also set in parent
+        const parentAndroid = (window as any).Android;
+        const iframeAndroid = win.Android;
+        // Proxy set — intercept future assignments
+        const handler: ProxyHandler<any> = {
+          set(target, prop, value) {
+            target[prop] = value;
+            // also mirror to parent so parent's fireResponse can find it
+            if (typeof prop === 'string' && prop.endsWith('_CALLBACK')) {
+              parentAndroid[prop] = value;
+              // also mirror to parent iOS/flutter for robustness
+              const w = window as any;
+              w.iOSNative = w.iOSNative || {};
+              w.iOSNative[prop] = value;
+              w.flutter_inappwebview = w.flutter_inappwebview || {};
+              w.flutter_inappwebview[prop] = value;
+            }
+            return true;
+          },
+          get(target, prop) {
+            return target[prop];
+          },
+        };
+        try {
+          win.Android = new Proxy(iframeAndroid, handler);
+          // re-assign after proxy creation, keep requestApp
+          win.Android.requestApp = iframeAndroid.requestApp;
+        } catch {
+          // fallback: periodic sync
+        }
+
+        console.info('[Host] Bridge forwarded to iframe', app.launchUrl);
+      } catch (e) {
+        console.warn('[Host] Failed to inject bridge into iframe', e);
+      }
+    };
+    iframe.addEventListener('load', onLoad);
+    return () => iframe.removeEventListener('load', onLoad);
+  }, [app.launchUrl]);
+
+  return (
+    <iframe
+      ref={ref}
+      src={app.launchUrl}
+      title={app.name}
+      style={{ width: '100%', height: '100%', minHeight: 640, border: 'none', background: white }}
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+    />
   );
 }
