@@ -202,7 +202,7 @@ const JsonEditor = styled.textarea`
 `;
 
 export const DevPanel: React.FC = () => {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<BridgeRequest[]>(getBridgeRequests());
   const [pending, setPending] = useState<BridgeRequest[]>(getPendingRequests());
   const [session, setSession] = useState<SessionState>(getSessionState());
@@ -400,6 +400,7 @@ export const DevPanel: React.FC = () => {
                   <Btn $variant="ghost" onClick={() => handleSessionSave('token', 'null')}>Clear</Btn>
                 </div>
               </div>
+              <EditableJsonBlock label="grantedScope (INIT_APP scope[])" value={session.grantedScope} onSave={(v) => handleSessionSave('grantedScope', v)} />
               <EditableJsonBlock label="user (USER_DETAIL_ACCESS)" value={session.user} onSave={(v) => handleSessionSave('user', v)} />
               <EditableJsonBlock label="product (GET_PRODUCT)" value={session.product} onSave={(v) => handleSessionSave('product', v)} />
               <EditableJsonBlock label="merchant (MERCHANT_DETAIL)" value={session.merchant} onSave={(v) => handleSessionSave('merchant', v)} />
@@ -407,7 +408,7 @@ export const DevPanel: React.FC = () => {
           </Section>
 
           <div style={{ fontSize: 10, color: gray[100], padding: '8px 2px 12px', lineHeight: 1.5 }}>
-            Host does NOT create callback slots — library does. Host only calls <code>window.Android[callbackKey]</code> etc with <code>{'{'}requestType, responseType, response{'}'}</code>. Reload after platform switch so library re-evaluates UA.
+            Real contract: Host calls <code>window.Android[callbackKey](JSON.stringify(payload))</code> where success is <code>{'{'}token, scope...{'}'}</code> and error is <code>{'{'}error_message{'}'}</code>. Scope is stored on INIT_APP success; out-of-scope requests auto-prefill error.
           </div>
         </Body>
       </Drawer>

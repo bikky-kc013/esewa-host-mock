@@ -1,7 +1,7 @@
 /**
  * SampleMiniApp.tsx — demonstrates real Mini App inside Host
  * Now accepts merchantIdentifier/vendorIdentifier from onboarding record (replaces static env).
- * Falls back to legacy hardcoded for backwards compat if props not provided (e.g. direct dev).
+ * Real contract: callback receives JSON STRING, not envelope — do JSON.parse(data) and check error_message.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -16,7 +16,8 @@ type Props = {
 function MiniAppInner({ merchantIdentifier, vendorIdentifier }: Props) {
   const { data, updateData } = useESewaDataProvider();
   const [titleInput, setTitleInput] = useState('Mini App Demo');
-  const [lastEnvelope, setLastEnvelope] = useState<any>(null);
+  const [lastRaw, setLastRaw] = useState<string | null>(null);
+  const [lastRes, setLastRes] = useState<any>(null);
   const [log, setLog] = useState<string>('Tap a button to fire a bridge request. Then respond from Host panel.');
 
   const mid = merchantIdentifier || 'IAAAAABTOBAbFhAXHhEHAgoXX0FRR1FJJiw3LCwkJzE=';
@@ -40,16 +41,27 @@ function MiniAppInner({ merchantIdentifier, vendorIdentifier }: Props) {
     if (token) payload.token = token;
 
     setLog(`→ ${requestType} (mid=${mid.slice(0, 12)}… awaiting Host panel via ${callbackKey})`);
-    requestFromMiniApp(payload, (envelope: any) => {
-      setLastEnvelope(envelope);
-      if (envelope?.responseType === 'error') {
-        setLog(`← ${requestType} error: ${JSON.stringify(envelope.response).slice(0, 200)}`);
+    requestFromMiniApp(payload, (data: any) => {
+      const rawData: string = typeof data === 'string' ? data : JSON.stringify(data);
+      setLastRaw(rawData);
+      let res: any;
+      try {
+        res = JSON.parse(rawData);
+      } catch (e) {
+        setLog(`← ${requestType} parse error: ${e} raw=${String(rawData).slice(0, 120)}`);
+        setLastRes(rawData);
+        return;
+      }
+      setLastRes(res);
+      if (res?.error_message) {
+        setLog(`← ${requestType} error: ${res.error_message}`);
       } else {
-        setLog(`← ${requestType} success: ${JSON.stringify(envelope?.response).slice(0, 200)}`);
-        if (requestType === 'INIT_APP' && envelope?.response?.token) {
+        setLog(`← ${requestType} success: ${JSON.stringify(res).slice(0, 200)}`);
+        if (requestType === 'INIT_APP' && res?.token) {
           try {
-            sessionStorage.setItem('token', envelope.response.token);
-            sessionStorage.setItem('miniAppAuthToken', envelope.response.token);
+            sessionStorage.setItem('token', res.token);
+            sessionStorage.setItem('miniAppAuthToken', res.token);
+            if (res.scope) sessionStorage.setItem('miniAppAuthScope', JSON.stringify(res.scope));
           } catch {}
         }
       }
@@ -65,7 +77,8 @@ function MiniAppInner({ merchantIdentifier, vendorIdentifier }: Props) {
     };
     setLog(`→ ${requestType} (no callback, one-way)`);
     requestMiniApp(payload);
-    setLastEnvelope({ info: 'requestMiniApp sent, no callback expected', requestType });
+    setLastRaw(null);
+    setLastRes({ info: 'requestMiniApp sent, no callback expected', requestType });
   };
 
   return (
@@ -128,17 +141,23 @@ function MiniAppInner({ merchantIdentifier, vendorIdentifier }: Props) {
         </div>
 
         <ESewaCard className="border-radius-8">
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#5E646B', letterSpacing: 0.5, textTransform: 'uppercase' }}>Last bridge callback</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#5E646B', letterSpacing: 0.5, textTransform: 'uppercase' }}>Last bridge callback (raw JSON string → JSON.parse)</div>
           <div style={{ fontSize: 12, marginTop: 6, wordBreak: 'break-all', whiteSpace: 'pre-wrap', color: '#1C252E' }}>{log}</div>
-          {lastEnvelope && (
+          {lastRaw !== null && (
             <pre style={{ marginTop: 8, background: '#F5FAFF', padding: 8, borderRadius: 8, border: '1px solid #EEF0F2', overflow: 'auto', maxHeight: 200, fontSize: 11 }}>
-              {JSON.stringify(lastEnvelope, null, 2)}
+              raw: {lastRaw.slice(0, 2000)}
+              {lastRes ? `\n\nparsed: ${JSON.stringify(lastRes, null, 2)}` : ''}
+            </pre>
+          )}
+          {lastRaw === null && lastRes && (
+            <pre style={{ marginTop: 8, background: '#F5FAFF', padding: 8, borderRadius: 8, border: '1px solid #EEF0F2', overflow: 'auto', maxHeight: 200, fontSize: 11 }}>
+              {JSON.stringify(lastRes, null, 2)}
             </pre>
           )}
         </ESewaCard>
 
         <div style={{ fontSize: 10, color: '#5E646B', lineHeight: 1.5 }}>
-          Envelope expected: <code>{'{'}requestType, responseType: 'success'|'error', response: any{'}'}</code>. Author response in Host panel then fire <code>*_CALLBACK</code>.
+          Real contract: <code>requestFromMiniApp(data, cb)</code> → Host calls <code>window.Android[callbackKey](JSON.stringify(payload))</code> where success is <code>{'{'}token, scope...{'}'}</code> and error is <code>{'{'}error_message{'}'}</code>. Check <code>res.error_message</code> after <code>JSON.parse(data)</code>.
         </div>
       </div>
     </div>

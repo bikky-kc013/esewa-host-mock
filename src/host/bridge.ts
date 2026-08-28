@@ -66,6 +66,7 @@ export type BridgeRequest = {
 
 export type SessionState = {
   token: string | null;
+  grantedScope: string[] | null;
   user: any | null;
   product: any | null;
   merchant: any | null;
@@ -78,6 +79,7 @@ let bridgeRequests: BridgeRequest[] = [];
 let pendingRequests: BridgeRequest[] = [];
 let sessionState: SessionState = {
   token: null,
+  grantedScope: null,
   user: {
     esewa_id: '9841000001',
     name: 'Ram Bahadur Thapa',
@@ -147,8 +149,6 @@ function onOutgoing(raw: string, platform: HostPlatform): void {
   // Task 3.5 — auto-validate INIT_APP merchant_identifier against live registry
   if (requestType === REQUEST_TYPE_ENUM.INIT_APP) {
     try {
-      // Lazy import to avoid circular at top-level; use dynamic check via localStorage directly
-      // to keep bridge decoupled, but we replicate store logic here
       const rawStore = typeof window !== 'undefined' ? localStorage.getItem('esewa_dev_registered_miniapps') : null;
       if (rawStore) {
         const apps = JSON.parse(rawStore);
@@ -159,7 +159,6 @@ function onOutgoing(raw: string, platform: HostPlatform): void {
           entry.suggestedResponse = { message: 'Unknown or non-live merchant_identifier' };
         }
       } else {
-        // No registry yet — if INIT_APP has any mid, suggest error so dev sees rejection path
         const mid = data.merchant_identifier || data.merchantIdentifier;
         if (mid) {
           entry.suggestedResponseType = 'error';
@@ -167,6 +166,15 @@ function onOutgoing(raw: string, platform: HostPlatform): void {
         }
       }
     } catch {}
+  }
+
+  // Task 4 — scope enforcement: if grantedScope exists and requestType not in it (not INIT_APP)
+  if (requestType !== REQUEST_TYPE_ENUM.INIT_APP && sessionState.grantedScope) {
+    const scope = sessionState.grantedScope;
+    if (!scope.includes(requestType)) {
+      entry.suggestedResponseType = 'error';
+      entry.suggestedResponse = { message: 'Requested service is outside granted scope' };
+    }
   }
 
   bridgeRequests.unshift(entry);
@@ -187,9 +195,10 @@ function onOutgoing(raw: string, platform: HostPlatform): void {
 
 /**
  * Fire a response for a pending request.
- * Spec: host calls window.Android[callbackKey]({requestType, responseType, response})
- * on the platform that library registered. We try all three slots for robustness,
- * but prefer the transport's platform.
+ * Real contract (Task 4): callback receives raw JSON STRING, not envelope.
+ *  - success: JSON.stringify(response)
+ *  - error:   JSON.stringify({ error_message: response.message ?? response })
+ * Always normalize error under error_message.
  */
 export function fireResponse(
   requestId: string,
@@ -202,37 +211,89 @@ export function fireResponse(
   const callbackKey = req.callbackKey!;
   const w = window as any;
 
-  const envelope: MiniAppResponseType = {
-    requestType: req.requestType,
-    responseType,
-    response,
-  };
+  // Build wire payload per real contract
+  let wirePayload: string;
+  let envelopeForLog: MiniAppResponseType;
+  if (responseType === 'error') {
+    // Normalize error: always { error_message: string }
+    let errorMessage: string;
+    if (typeof response === 'string') {
+      errorMessage = response;
+    } else if (response && typeof response === 'object' && 'error_message' in response) {
+      // already correct shape (e.g. prefilled {"error_message": "..."}) — use as-is but ensure string
+      const val = (response as any).error_message;
+      errorMessage = typeof val === 'string' ? val : JSON.stringify(val);
+      // if already correct, use original object directly to avoid double wrap
+      if (Object.keys(response).length === 1 && 'error_message' in response) {
+        wirePayload = JSON.stringify(response);
+        envelopeForLog = { requestType: req.requestType, responseType, response };
+        // skip generic wrapping below
+        // update log and fire directly
+        req.responded = true;
+        req.response = envelopeForLog;
+        const logEntry = bridgeRequests.find((r) => r.id === requestId);
+        if (logEntry) { logEntry.responded = true; logEntry.response = envelopeForLog; }
+        pendingRequests.splice(idx, 1);
+        // No session side-effects for error
+        let fn: any =
+          (w.Android && w.Android[callbackKey]) ||
+          (w.iOSNative && w.iOSNative[callbackKey]) ||
+          (w.flutter_inappwebview && w.flutter_inappwebview[callbackKey]);
+        if (!fn) {
+          if (req.platform === 'android') fn = w.Android?.[callbackKey];
+          else if (req.platform === 'ios') fn = w.webkit?.messageHandlers?.iOSNative?.[callbackKey] || w.iOSNative?.[callbackKey];
+          else if (req.platform === 'flutter') fn = w.flutter_inappwebview?.[callbackKey];
+        }
+        if (!fn && w[callbackKey]) fn = w[callbackKey];
+        if (typeof fn === 'function') {
+          try { fn(wirePayload); console.info(`[eSewa Host] <- ${req.requestType} error`, wirePayload); } catch (e) { console.error(`[eSewa Host] callback ${callbackKey} threw`, e); }
+        } else {
+          console.warn(`[eSewa Host] No callback found for ${callbackKey} (${req.requestType}). Payload:`, wirePayload);
+        }
+        emit();
+        return true;
+      }
+      errorMessage = typeof val === 'string' ? val : String(val);
+    } else if (response && typeof response === 'object' && 'message' in response) {
+      errorMessage = String((response as any).message);
+    } else if (typeof response === 'object') {
+      // if object without message/error_message, stringify it as message
+      errorMessage = JSON.stringify(response);
+    } else {
+      errorMessage = String(response);
+    }
+    wirePayload = JSON.stringify({ error_message: errorMessage });
+    envelopeForLog = { requestType: req.requestType, responseType, response: { error_message: errorMessage } };
+  } else {
+    wirePayload = JSON.stringify(response);
+    envelopeForLog = { requestType: req.requestType, responseType, response };
+  }
 
-  // Update pending entry
+  // Update pending entry for log display
   req.responded = true;
-  req.response = envelope;
-  // also update in log
+  req.response = envelopeForLog;
   const logEntry = bridgeRequests.find((r) => r.id === requestId);
   if (logEntry) {
     logEntry.responded = true;
-    logEntry.response = envelope;
+    logEntry.response = envelopeForLog;
   }
 
-  // Remove from pending after firing
   pendingRequests.splice(idx, 1);
 
-  // Session side-effects for convenience (optional)
+  // Session side-effects — scope + token
   if (
     req.requestType === REQUEST_TYPE_ENUM.INIT_APP &&
     responseType === 'success' &&
     response?.token
   ) {
     sessionState.token = response.token;
+    if (Array.isArray(response.scope)) {
+      sessionState.grantedScope = [...response.scope];
+    }
     try {
-      sessionStorage.setItem('token', response.token); // library's requestMiniApp reads 'token'
-      sessionStorage.setItem('miniAppAuthToken', response.token); // our earlier mock compatibility
-      if (response.scope)
-        sessionStorage.setItem('miniAppAuthScope', JSON.stringify(response.scope));
+      sessionStorage.setItem('token', response.token);
+      sessionStorage.setItem('miniAppAuthToken', response.token);
+      if (response.scope) sessionStorage.setItem('miniAppAuthScope', JSON.stringify(response.scope));
     } catch {}
   }
   if (req.requestType === REQUEST_TYPE_ENUM.USER_DETAIL_ACCESS && responseType === 'success') {
@@ -245,13 +306,12 @@ export function fireResponse(
     sessionState.merchant = response;
   }
 
-  // Call the callback slot that library created
+  // Call the callback slot that library created — with JSON STRING
   let fn: any =
     (w.Android && w.Android[callbackKey]) ||
     (w.iOSNative && w.iOSNative[callbackKey]) ||
     (w.flutter_inappwebview && w.flutter_inappwebview[callbackKey]);
 
-  // Also try platform-specific preference
   if (!fn) {
     if (req.platform === 'android') fn = w.Android?.[callbackKey];
     else if (req.platform === 'ios')
@@ -259,22 +319,20 @@ export function fireResponse(
     else if (req.platform === 'flutter') fn = w.flutter_inappwebview?.[callbackKey];
   }
 
-  // Fallback: window[callbackKey] (some older wrappers)
   if (!fn && w[callbackKey]) fn = w[callbackKey];
 
   if (typeof fn === 'function') {
     try {
-      fn(envelope);
-      console.info(`[eSewa Host] <- ${req.requestType} ${responseType}`, envelope);
+      fn(wirePayload);
+      console.info(`[eSewa Host] <- ${req.requestType} ${responseType}`, wirePayload);
     } catch (e) {
       console.error(`[eSewa Host] callback ${callbackKey} threw`, e);
     }
   } else {
     console.warn(
-      `[eSewa Host] No callback found for ${callbackKey} (${req.requestType}). Envelope:`,
-      envelope,
+      `[eSewa Host] No callback found for ${callbackKey} (${req.requestType}). Payload:`,
+      wirePayload,
     );
-    // Still emit so panel shows responded even if mini-app won't receive
   }
 
   emit();
@@ -301,7 +359,7 @@ export function getSessionState(): SessionState {
 
 export function setSessionState(patch: Partial<SessionState>): void {
   Object.assign(sessionState, patch);
-  // persist token side-effect if provided
+  // persist token / scope side-effect if provided
   if (patch.token !== undefined) {
     try {
       if (patch.token) {
@@ -310,6 +368,15 @@ export function setSessionState(patch: Partial<SessionState>): void {
       } else {
         sessionStorage.removeItem('token');
         sessionStorage.removeItem('miniAppAuthToken');
+      }
+    } catch {}
+  }
+  if (patch.grantedScope !== undefined) {
+    try {
+      if (patch.grantedScope) {
+        sessionStorage.setItem('miniAppAuthScope', JSON.stringify(patch.grantedScope));
+      } else {
+        sessionStorage.removeItem('miniAppAuthScope');
       }
     } catch {}
   }
@@ -327,10 +394,11 @@ export function subscribePending(fn: () => void): () => void {
 }
 
 // Default response templates per requestType for panel quick-fill
+// INIT_APP placeholder uses realistic narrow scope per Task 4 spec
 export const DEFAULT_RESPONSES: Record<string, any> = {
   [REQUEST_TYPE_ENUM.INIT_APP]: {
-    token: 'mock_token_' + Math.random().toString(36).slice(2, 10),
-    scope: Object.values(REQUEST_TYPE_ENUM),
+    token: 'dev-fake-token',
+    scope: ['USER_DETAIL_ACCESS', 'LOCATION_ACCESS', 'MEDIA_ACCESS', 'REQUEST_PAYMENT'],
   },
   [REQUEST_TYPE_ENUM.USER_DETAIL_ACCESS]: {
     esewa_id: '9841000001',
@@ -530,6 +598,7 @@ export function resetBridge(): void {
   pendingRequests = [];
   sessionState = {
     token: null,
+    grantedScope: null,
     user: {
       esewa_id: '9841000001',
       name: 'Ram Bahadur Thapa',
