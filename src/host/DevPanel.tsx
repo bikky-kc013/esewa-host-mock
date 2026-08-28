@@ -266,11 +266,17 @@ export const DevPanel: React.FC = () => {
 
   const handleSessionSave = (key: keyof SessionState, raw: string) => {
     let parsed: any = raw;
-    // try parse if looks like JSON
     const trimmed = raw.trim();
-    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']')) || trimmed.startsWith('"')) {
+    if (key === 'balance') {
+      const n = Number(trimmed);
+      parsed = isNaN(n) ? 0 : n;
+    } else if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']')) || trimmed.startsWith('"')) {
       try { parsed = JSON.parse(raw); } catch { /* keep raw */ }
     } else if (trimmed === 'null') parsed = null;
+    else {
+      // allow numeric JSON like 12480
+      try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+    }
     setSessionState({ [key]: parsed } as any);
   };
 
@@ -400,8 +406,35 @@ export const DevPanel: React.FC = () => {
                   <Btn $variant="ghost" onClick={() => handleSessionSave('token', 'null')}>Clear</Btn>
                 </div>
               </div>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: gray[500], marginBottom: 4 }}>balance — wallet NPR (host → mini-app)</div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <input
+                    type="number"
+                    value={session.balance ?? 0}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10)
+                      setSession((s) => ({ ...s, balance: isNaN(v) ? 0 : v }))
+                    }}
+                    onBlur={(e) => {
+                      const v = parseInt(e.target.value, 10)
+                      const bal = isNaN(v) ? 0 : v
+                      // keep user.balance in sync for USER_DETAIL response
+                      const curUser = (session.user as Record<string, unknown>) || {}
+                      const nextUser = { ...curUser, balance: bal }
+                      handleSessionSave('balance', String(bal))
+                      handleSessionSave('user', JSON.stringify(nextUser))
+                    }}
+                    style={{ flex: 1, border: `1px solid ${bluegray[100]}`, borderRadius: 8, padding: '6px 8px', fontSize: 11, fontWeight: 600 }}
+                  />
+                  <span style={{ fontSize: 11, color: gray[100] }}>NPR</span>
+                  <Btn $variant="ghost" onClick={() => { handleSessionSave('balance', '12480'); handleSessionSave('user', JSON.stringify({ ...(session.user as object), balance: 12480 })); setSession((s) => ({ ...s, balance: 12480, user: { ...(s.user as object), balance: 12480 } } as never)) }}>Reset 12,480</Btn>
+                  <Btn $variant="ghost" onClick={() => { handleSessionSave('balance', '500'); handleSessionSave('user', JSON.stringify({ ...(session.user as object), balance: 500 })); setSession((s) => ({ ...s, balance: 500, user: { ...(s.user as object), balance: 500 } } as never)) }}>Set 500 (test insufficient)</Btn>
+                </div>
+                <div style={{ fontSize: 10, color: gray[100], marginTop: 4 }}>Mini-app reads this via USER_DETAIL_ACCESS → balance. If balance &lt; pack price, host will respond error and mini-app shows insufficient.</div>
+              </div>
               <EditableJsonBlock label="grantedScope (INIT_APP scope[])" value={session.grantedScope} onSave={(v) => handleSessionSave('grantedScope', v)} />
-              <EditableJsonBlock label="user (USER_DETAIL_ACCESS)" value={session.user} onSave={(v) => handleSessionSave('user', v)} />
+              <EditableJsonBlock label="user (USER_DETAIL_ACCESS) — includes balance" value={session.user} onSave={(v) => handleSessionSave('user', v)} />
               <EditableJsonBlock label="product (GET_PRODUCT)" value={session.product} onSave={(v) => handleSessionSave('product', v)} />
               <EditableJsonBlock label="merchant (MERCHANT_DETAIL)" value={session.merchant} onSave={(v) => handleSessionSave('merchant', v)} />
             </div>

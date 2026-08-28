@@ -11,7 +11,8 @@ import { DevPanel } from './host/DevPanel';
 import { DiscoveryFeed } from './host/DiscoveryFeed';
 import { OnboardingConsole } from './host/onboarding/OnboardingConsole';
 import SampleMiniApp from './miniapp/SampleMiniApp';
-import { getApp } from './host/onboarding/store';
+import EsimRemoteApp from './miniapp/EsimRemoteApp';
+import { getApp, listApps, createApp, updateStatus } from './host/onboarding/store';
 import styled from 'styled-components';
 import { gray, primary, white, bluegray } from './host/tokens';
 
@@ -40,6 +41,10 @@ const NavBtn = styled.button<{ $active?: boolean }>`
   cursor: pointer;
 `;
 
+function isEsimApp(app: NonNullable<ReturnType<typeof getApp>>) {
+  return app.name.toLowerCase().includes('esim') || app.iconLabel.toUpperCase() === 'ES'
+}
+
 function TitleObserver({ onChange }: { onChange: (t: string) => void }) {
   const { data } = useESewaDataProvider();
   useEffect(() => {
@@ -52,6 +57,35 @@ export default function App() {
   const [view, setView] = useState<AppView>('discovery');
   const [activeAppId, setActiveAppId] = useState<string | null>(null);
   const [debugTitle, setDebugTitle] = useState<string>('');
+
+  // Seed eSIM mini-app (MF remote) as live so it appears in DiscoveryFeed without manual onboarding
+  useEffect(() => {
+    try {
+      const existing = listApps().find((a) => a.name.toLowerCase() === 'esim' || a.name.toLowerCase().includes('esim'))
+      if (!existing) {
+        const created = createApp({
+          name: 'eSIM',
+          description: 'Buy eSIM data packs for 30+ destinations — same flow as standalone mini-app, now via host bridge (token/user/location/balance + packages).',
+          category: 'Travel',
+          iconLabel: 'ES',
+          badge: 'MF',
+          launchMode: 'embedded',
+          contactEmail: 'esim@esewa.mock',
+          businessType: 'Private Limited',
+        })
+        // Auto-approve → live so DiscoveryFeed shows it
+        updateStatus(created.id, 'approved')
+        updateStatus(created.id, 'live')
+        console.info('[Host] Seeded eSIM mini-app (MF remote) as live', created)
+      } else if (existing.status !== 'live') {
+        // Ensure existing eSIM is live
+        updateStatus(existing.id, 'approved')
+        updateStatus(existing.id, 'live')
+      }
+    } catch (e) {
+      console.warn('[Host] Failed to seed eSIM app', e)
+    }
+  }, [])
 
   useEffect(() => {
     const t = document.documentElement.getAttribute('data-theme');
@@ -106,9 +140,13 @@ export default function App() {
       {view === 'miniapp' && (
         <ESewaThemeProvider>
           <ESewaProvider>
-            <PhoneShell debugTitle={debugTitle} onBackToDiscovery={() => setView('discovery')}>
               {activeApp ? (
-                activeApp.launchMode === 'iframe' && activeApp.launchUrl ? (
+                isEsimApp(activeApp) ? (
+                  <EsimRemoteApp
+                    merchantIdentifier={activeApp.merchant_identifier}
+                    vendorIdentifier={activeApp.vendorIdentifier}
+                  />
+                ) : activeApp.launchMode === 'iframe' && activeApp.launchUrl ? (
                   <IframeMiniApp app={activeApp} />
                 ) : (
                   <SampleMiniApp
@@ -120,7 +158,6 @@ export default function App() {
                 <div style={{ padding: 20, fontSize: 13 }}>No app selected.</div>
               )}
               <TitleObserver onChange={setDebugTitle} />
-            </PhoneShell>
             <DevPanel />
           </ESewaProvider>
         </ESewaThemeProvider>

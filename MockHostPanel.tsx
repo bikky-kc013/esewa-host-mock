@@ -51,6 +51,7 @@ export const MockHostPanel: React.FC<PanelProps> = ({
   const [token, setToken] = useState(mockEsewaConfig.token);
   const [esewaId, setEsewaId] = useState(mockEsewaConfig.esewaId);
   const [amount, setAmount] = useState<string>(String(mockEsewaConfig.amount));
+  const [balance, setBalance] = useState<string>(String((mockEsewaConfig as unknown as Record<string, unknown>).balance ?? 12480));
   const [userName, setUserName] = useState(mockEsewaConfig.userName);
   const [mobile, setMobile] = useState(mockEsewaConfig.mobile);
   const [lat, setLat] = useState(String(mockEsewaConfig.latitude));
@@ -71,6 +72,7 @@ export const MockHostPanel: React.FC<PanelProps> = ({
     setToken(mockEsewaConfig.token);
     setEsewaId(mockEsewaConfig.esewaId);
     setAmount(String(mockEsewaConfig.amount));
+    setBalance(String((mockEsewaConfig as unknown as Record<string, unknown>).balance ?? 12480));
     setUserName(mockEsewaConfig.userName);
     setMobile(mockEsewaConfig.mobile);
     setLat(String(mockEsewaConfig.latitude));
@@ -120,6 +122,10 @@ export const MockHostPanel: React.FC<PanelProps> = ({
   const applyAmount = () => {
     const v = parseFloat(amount);
     if (!isNaN(v)) setMockConfig({ amount: v });
+  };
+  const applyBalance = () => {
+    const v = parseFloat(balance);
+    if (!isNaN(v)) setMockConfig({ balance: v } as unknown as Record<string, unknown>);
   };
   const applyUserName = () => setMockConfig({ userName });
   const applyMobile = () => setMockConfig({ mobile });
@@ -455,6 +461,28 @@ export const MockHostPanel: React.FC<PanelProps> = ({
                 ✓
               </button>
             </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+          <div>
+            <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>Wallet Balance (NPR) — host → mini-app</div>
+            <div style={rowStyle}>
+              <input
+                style={inputStyle}
+                value={balance}
+                onChange={(e) => setBalance(e.target.value)}
+                type="number"
+              />
+              <button style={btnGhost} onClick={applyBalance}>
+                ✓
+              </button>
+            </div>
+            <div style={{ fontSize: 9, opacity: 0.5, marginTop: 3 }}>Returned via USER_DETAIL_ACCESS → balance. Test insufficient: set 500 &lt; pack price.</div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', paddingBottom: 2 }}>
+            <button style={btnGhost} onClick={() => { setBalance('12480'); setMockConfig({ balance: 12480 } as unknown as Record<string, unknown>); }}>Reset 12,480</button>
+            <button style={btnGhost} onClick={() => { setBalance('500'); setMockConfig({ balance: 500 } as unknown as Record<string, unknown>); }}>Set 500</button>
           </div>
         </div>
 

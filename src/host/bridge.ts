@@ -70,6 +70,7 @@ export type SessionState = {
   user: any | null;
   product: any | null;
   merchant: any | null;
+  balance: number | null;
   // keep as editable JSON
 };
 
@@ -85,6 +86,8 @@ let sessionState: SessionState = {
     name: 'Ram Bahadur Thapa',
     mobile: '9841000001',
     email: 'ram.thapa@esewa.mock',
+    balance: 12480,
+    currency: 'NPR',
   },
   product: {
     id: '3299',
@@ -100,6 +103,7 @@ let sessionState: SessionState = {
     contact: '9800000000',
     email: 'merchant@mock.com.np',
   },
+  balance: 12480,
 };
 
 let listeners: Set<() => void> = new Set();
@@ -174,6 +178,15 @@ function onOutgoing(raw: string, platform: HostPlatform): void {
     if (!scope.includes(requestType)) {
       entry.suggestedResponseType = 'error';
       entry.suggestedResponse = { message: 'Requested service is outside granted scope' };
+    }
+  }
+
+  // Wallet balance check — if REQUEST_PAYMENT amount exceeds host balance, suggest insufficient error
+  if (requestType === REQUEST_TYPE_ENUM.REQUEST_PAYMENT && typeof sessionState.balance === 'number') {
+    const amt = (data?.data?.amount ?? data?.amount ?? 0) as number
+    if (typeof amt === 'number' && amt > sessionState.balance) {
+      entry.suggestedResponseType = 'error';
+      entry.suggestedResponse = { error_message: `Insufficient balance. Available: Rs ${sessionState.balance}, required: Rs ${amt}.` };
     }
   }
 
@@ -298,12 +311,23 @@ export function fireResponse(
   }
   if (req.requestType === REQUEST_TYPE_ENUM.USER_DETAIL_ACCESS && responseType === 'success') {
     sessionState.user = response;
+    if (typeof response.balance === 'number') sessionState.balance = response.balance;
+    else if (typeof response.walletBalance === 'number') sessionState.balance = response.walletBalance;
   }
   if (req.requestType === REQUEST_TYPE_ENUM.GET_PRODUCT && responseType === 'success') {
     sessionState.product = response;
   }
   if (req.requestType === REQUEST_TYPE_ENUM.MERCHANT_DETAIL && responseType === 'success') {
     sessionState.merchant = response;
+  }
+  if (req.requestType === REQUEST_TYPE_ENUM.REQUEST_PAYMENT && responseType === 'success') {
+    const amt = (req.data?.data?.amount ?? response?.amount ?? 0) as number
+    if (typeof sessionState.balance === 'number' && typeof amt === 'number') {
+      sessionState.balance = Math.max(0, sessionState.balance - amt)
+      if (sessionState.user && typeof sessionState.user === 'object') {
+        ;(sessionState.user as Record<string, unknown>).balance = sessionState.balance
+      }
+    }
   }
 
   // Call the callback slot that library created — with JSON STRING
@@ -405,6 +429,8 @@ export const DEFAULT_RESPONSES: Record<string, any> = {
     name: 'Ram Bahadur Thapa',
     mobile: '9841000001',
     email: 'ram.thapa@esewa.mock',
+    balance: 12480,
+    currency: 'NPR',
   },
   [REQUEST_TYPE_ENUM.LOCATION_ACCESS]: {
     latitude: 27.7172,
@@ -604,6 +630,8 @@ export function resetBridge(): void {
       name: 'Ram Bahadur Thapa',
       mobile: '9841000001',
       email: 'ram.thapa@esewa.mock',
+      balance: 12480,
+      currency: 'NPR',
     },
     product: {
       id: '3299',
@@ -619,6 +647,7 @@ export function resetBridge(): void {
       contact: '9800000000',
       email: 'merchant@mock.com.np',
     },
+    balance: 12480,
   };
   try {
     sessionStorage.removeItem('token');

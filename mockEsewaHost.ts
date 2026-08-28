@@ -96,6 +96,8 @@ export type MockEsewaConfig = {
   longitude: number;
   /** Fake payment amount used as fallback */
   amount: number;
+  /** Wallet balance — returned via USER_DETAIL_ACCESS and checked on REQUEST_PAYMENT */
+  balance: number;
   /** VALIDATE_TRANSACTION status toggle */
   validateStatus: ValidateStatus;
   /** Per-request forced error toggle */
@@ -137,6 +139,7 @@ export const mockEsewaConfig: MockEsewaConfig = {
   latitude: 27.7172,
   longitude: 85.324,
   amount: 1250.5,
+  balance: 12480,
   validateStatus: 'COMPLETE',
   forceError: {},
   errorMessages: {},
@@ -265,6 +268,8 @@ function buildStub(requestData: RequestData): { payload: any; isError: boolean; 
           name: mockEsewaConfig.userName,
           mobile: mockEsewaConfig.mobile,
           email: mockEsewaConfig.email,
+          balance: mockEsewaConfig.balance,
+          currency: 'NPR',
         },
         isError: false,
         raw: false,
@@ -310,6 +315,20 @@ function buildStub(requestData: RequestData): { payload: any; isError: boolean; 
     case REQUEST_TYPE_ENUM.REQUEST_PAYMENT: {
       const amt = requestData.data?.amount ?? mockEsewaConfig.amount;
       const pcode = requestData.data?.product_code ?? 'NP-ES-VIANET';
+      // Insufficient balance check — mirrors real host wallet validation
+      if (typeof mockEsewaConfig.balance === 'number' && amt > mockEsewaConfig.balance) {
+        return {
+          payload: {
+            error_message: `Insufficient balance. Available: Rs ${mockEsewaConfig.balance}, required: Rs ${amt}.`,
+          },
+          isError: true,
+          raw: false,
+        };
+      }
+      // deduct for subsequent calls (demo)
+      if (typeof mockEsewaConfig.balance === 'number') {
+        mockEsewaConfig.balance = Math.max(0, mockEsewaConfig.balance - amt);
+      }
       return {
         payload: {
           status: 'COMPLETE',
@@ -318,6 +337,7 @@ function buildStub(requestData: RequestData): { payload: any; isError: boolean; 
           transaction_code: `TXN${Date.now()}`,
           product_code: pcode,
           amount: amt,
+          remainingBalance: mockEsewaConfig.balance,
           // echo original properties for convenience
           properties: requestData.data?.properties ?? {},
           message: 'Payment request simulated successfully',
