@@ -11,35 +11,30 @@
  *
  * This bridge:
  * - Intercepts all three transports and creates a pending entry
- * - Does NOT auto-respond (spec: dev panel authors response manually)
- * - Optionally can auto-respond with sensible defaults if toggled (for quick DX)
+ * - Answers the request itself via autoResponder.ts (default) so a Mini App
+ *   gets its token / user / balance / transactions without anyone clicking
+ * - Falls back to the manual DevPanel queue when auto mode is switched off
  * - Emits CustomEvents for panel to subscribe
  */
 
 import type { HostPlatform } from './platform';
+import { DEFAULT_GRANTED_SCOPE, REQUEST_TYPE_ENUM } from './requestTypes';
+import {
+  getAutoLatency,
+  isAutoRespondEnabled,
+  noteIssuedToken,
+  resetIssuedTokens,
+  resolveAutoResponse,
+  setAutoLatency,
+  setAutoRespondEnabled,
+} from './autoResponder';
+import type { HostTransaction } from './autoResponder';
+import { getCurrentLocation } from '../utils/utilityFunc';
 
-// Exact strings from dist/index.js:8065-8082
-export const REQUEST_TYPE_ENUM = {
-  INIT_APP: 'INIT_APP',
-  REQUEST_PAYMENT: 'REQUEST_PAYMENT',
-  USER_DETAIL_ACCESS: 'USER_DETAIL_ACCESS',
-  MEDIA_ACCESS: 'MEDIA_ACCESS',
-  LOCATION_ACCESS: 'LOCATION_ACCESS',
-  VALIDATE_TRANSACTION: 'VALIDATE_TRANSACTION',
-  CLOSE_APP: 'CLOSE_APP',
-  FILE_DOWNLOAD_ACCESS: 'FILE_DOWNLOAD_ACCESS',
-  GET_PRODUCT: 'GET_PRODUCT',
-  VALIDATE_USER: 'VALIDATE_USER',
-  MERCHANT_DETAIL: 'MERCHANT_DETAIL',
-  QR_SCANNER_ACCESS: 'QR_SCANNER_ACCESS',
-  PAYMENT_REQUEST: 'PAYMENT_REQUEST',
-  CONNECTION_REQUEST: 'CONNECTION_REQUEST',
-  CREDIT_ADDITION: 'CREDIT_ADDITION',
-  PAYMENT_SETTLEMENT: 'PAYMENT_SETTLEMENT',
-  DUE_DATE_REMINDER: 'DUE_DATE_REMINDER',
-} as const;
-
-export type RequestType = (typeof REQUEST_TYPE_ENUM)[keyof typeof REQUEST_TYPE_ENUM];
+// Wire vocabulary lives in requestTypes.ts so autoResponder.ts can use it
+// without importing this module (cycle). Re-exported for existing importers.
+export { REQUEST_TYPE_ENUM, DEFAULT_GRANTED_SCOPE } from './requestTypes';
+export type { RequestType } from './requestTypes';
 
 export type MiniAppResponseType = {
   requestType: string;
@@ -70,9 +65,16 @@ export type SessionState = {
   user: any | null;
   product: any | null;
   merchant: any | null;
+  location: any | null;
   balance: number | null;
+  /** Every settled payment / credit the host has served this session. */
+  transactions: HostTransaction[];
   // keep as editable JSON
 };
+
+
+const currentLocation = await getCurrentLocation()
+
 
 const MAX_LOG = 100;
 
@@ -103,7 +105,9 @@ let sessionState: SessionState = {
     contact: '9800000000',
     email: 'merchant@mock.com.np',
   },
+  location: { ...currentLocation },
   balance: 12480,
+  transactions: [],
 };
 
 let listeners: Set<() => void> = new Set();
@@ -198,12 +202,54 @@ function onOutgoing(raw: string, platform: HostPlatform): void {
     if (pendingRequests.length > MAX_LOG) pendingRequests.pop();
   }
 
-  // Auto-store token if INIT_APP with manual response not yet fired?
-  // We don't auto-respond; panel will fire. But we can show pending.
-
   console.info(`[eSewa Host] -> ${requestType} via ${platform}`, data);
 
   emit();
+
+  // Auto mode (default): the host answers on its own from session state +
+  // registry, exactly like the real app would. Manual mode leaves the entry in
+  // the pending queue for the DevPanel. Deferred by a tick either way so the
+  // Mini App's `requestFromMiniApp` call stack has unwound before its callback
+  // runs, and so the log renders the request before the response.
+  if (entry.hasCallback && isAutoRespondEnabled()) {
+    window.setTimeout(() => {
+      // Still pending? A dev may have fired it manually in the meantime.
+      if (!pendingRequests.some((r) => r.id === entry.id)) return;
+      let auto: ReturnType<typeof resolveAutoResponse>;
+      try {
+        auto = resolveAutoResponse(entry, { session: sessionState });
+      } catch (e) {
+        console.error(`[eSewa Host] auto-responder threw for ${entry.requestType}`, e);
+        auto = { responseType: 'error', response: { error_message: 'Host failed to handle request' } };
+      }
+      if (!auto) return; // host has no opinion — leave it for the panel
+      fireResponse(entry.id, auto.responseType, auto.response);
+    }, getAutoLatency());
+  }
+}
+
+/** Keep user.balance in step with the wallet balance the panel edits. */
+function syncUserBalance(): void {
+  if (sessionState.user && typeof sessionState.user === 'object') {
+    (sessionState.user as Record<string, unknown>).balance = sessionState.balance;
+  }
+}
+
+/**
+ * Append a settled money movement to the ledger so VALIDATE_TRANSACTION can
+ * resolve it later and the panel can show what the mini app actually spent.
+ */
+function recordTransaction(req: BridgeRequest, response: any, amount: number): void {
+  const txn: HostTransaction = {
+    transaction_uuid: response?.transaction_uuid ?? `txn-${Date.now()}`,
+    refId: response?.refId ?? `REF${Date.now()}`,
+    amount: typeof amount === 'number' ? amount : 0,
+    product_code: response?.product_code ?? req.data?.data?.product_code ?? undefined,
+    merchant_identifier: req.data?.merchant_identifier ?? req.data?.merchantIdentifier ?? undefined,
+    status: (response?.status as HostTransaction['status']) ?? 'COMPLETE',
+    timestamp: response?.timestamp ?? new Date().toISOString(),
+  };
+  sessionState.transactions = [txn, ...(sessionState.transactions ?? [])].slice(0, MAX_LOG);
 }
 
 /**
@@ -300,6 +346,7 @@ export function fireResponse(
     response?.token
   ) {
     sessionState.token = response.token;
+    noteIssuedToken(response.token);
     if (Array.isArray(response.scope)) {
       sessionState.grantedScope = [...response.scope];
     }
@@ -324,10 +371,17 @@ export function fireResponse(
     const amt = (req.data?.data?.amount ?? response?.amount ?? 0) as number
     if (typeof sessionState.balance === 'number' && typeof amt === 'number') {
       sessionState.balance = Math.max(0, sessionState.balance - amt)
-      if (sessionState.user && typeof sessionState.user === 'object') {
-        ;(sessionState.user as Record<string, unknown>).balance = sessionState.balance
-      }
+      syncUserBalance()
     }
+    recordTransaction(req, response, amt)
+  }
+  if (req.requestType === REQUEST_TYPE_ENUM.CREDIT_ADDITION && responseType === 'success') {
+    const amt = (req.data?.data?.amount ?? response?.amount ?? 0) as number
+    if (typeof sessionState.balance === 'number' && typeof amt === 'number' && amt > 0) {
+      sessionState.balance = sessionState.balance + amt
+      syncUserBalance()
+    }
+    recordTransaction(req, response, amt)
   }
 
   // Call the callback slot that library created — with JSON STRING
@@ -381,10 +435,20 @@ export function getSessionState(): SessionState {
   return { ...sessionState };
 }
 
+export function getTransactions(): HostTransaction[] {
+  return [...(sessionState.transactions ?? [])];
+}
+
+export function clearTransactions(): void {
+  sessionState.transactions = [];
+  emit();
+}
+
 export function setSessionState(patch: Partial<SessionState>): void {
   Object.assign(sessionState, patch);
   // persist token / scope side-effect if provided
   if (patch.token !== undefined) {
+    noteIssuedToken(patch.token);
     try {
       if (patch.token) {
         sessionStorage.setItem('token', patch.token);
@@ -422,7 +486,7 @@ export function subscribePending(fn: () => void): () => void {
 export const DEFAULT_RESPONSES: Record<string, any> = {
   [REQUEST_TYPE_ENUM.INIT_APP]: {
     token: 'dev-fake-token',
-    scope: ['USER_DETAIL_ACCESS', 'LOCATION_ACCESS', 'MEDIA_ACCESS', 'REQUEST_PAYMENT'],
+    scope: [...DEFAULT_GRANTED_SCOPE],
   },
   [REQUEST_TYPE_ENUM.USER_DETAIL_ACCESS]: {
     esewa_id: '9841000001',
@@ -433,10 +497,10 @@ export const DEFAULT_RESPONSES: Record<string, any> = {
     currency: 'NPR',
   },
   [REQUEST_TYPE_ENUM.LOCATION_ACCESS]: {
-    latitude: 27.7172,
-    longitude: 85.324,
-    accuracy: 12.5,
-    address: 'Kathmandu, Nepal',
+    latitude: currentLocation.latitude,
+    longitude: currentLocation.longitude,
+    accuracy:currentLocation.accuracy,
+    address: currentLocation.address,
   },
   [REQUEST_TYPE_ENUM.MEDIA_ACCESS]: {
     media:
@@ -601,9 +665,15 @@ export function installHostBridge(): boolean {
     getPendingRequests,
     getSessionState,
     setSessionState,
+    getTransactions,
     fireResponse,
     clearBridgeLog,
     REQUEST_TYPE_ENUM,
+    // auto mode — host answers Mini App requests without the DevPanel
+    isAutoRespondEnabled,
+    setAutoRespondEnabled,
+    getAutoLatency,
+    setAutoLatency,
     // also expose for tests
     _onOutgoing: onOutgoing,
   };
@@ -622,6 +692,7 @@ export function uninstallHostBridge(): void {
 export function resetBridge(): void {
   bridgeRequests = [];
   pendingRequests = [];
+  resetIssuedTokens();
   sessionState = {
     token: null,
     grantedScope: null,
@@ -647,7 +718,9 @@ export function resetBridge(): void {
       contact: '9800000000',
       email: 'merchant@mock.com.np',
     },
+    location: { ...DEFAULT_LOCATION },
     balance: 12480,
+    transactions: [],
   };
   try {
     sessionStorage.removeItem('token');

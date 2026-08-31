@@ -87,6 +87,17 @@ export default function App() {
     }
   }, [])
 
+  // CLOSE_APP — the host bridge answers the request and emits this; the shell
+  // is what actually navigates back, same as the real app popping the WebView.
+  useEffect(() => {
+    const onClose = () => {
+      setActiveAppId(null);
+      setView('discovery');
+    };
+    window.addEventListener('esewaHostCloseApp', onClose);
+    return () => window.removeEventListener('esewaHostCloseApp', onClose);
+  }, []);
+
   useEffect(() => {
     const t = document.documentElement.getAttribute('data-theme');
     if (t !== 'light') {
