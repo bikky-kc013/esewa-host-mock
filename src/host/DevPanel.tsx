@@ -66,7 +66,7 @@ function Drawer({ open, children }: { open: boolean; children: React.ReactNode }
   const platformKey = getStoredPlatform();
   return (
     <div
-      className="fixed top-0 right-0 z-[9999] flex h-[100vh] w-[420px] flex-col border-l border-bluegray-100 bg-white"
+      className="fixed top-0 right-0 z-9999 flex h-screen w-105 flex-col border-l border-bluegray-100 bg-white"
       style={{
         transform: open ? 'translateX(0)' : 'translateX(100%)',
         transition: 'transform 0.24s ease',
@@ -77,7 +77,7 @@ function Drawer({ open, children }: { open: boolean; children: React.ReactNode }
       <div className="flex items-center justify-between bg-primary-500 px-4 pt-3.5 pb-3 text-white">
         <div>
           <div className="text-[13px] font-extrabold tracking-[0.4px]">eSewa Host — Dev Panel</div>
-          <div className="mt-[2px] text-[11px] opacity-90">Bridge log · Pending queue · Session</div>
+          <div className="mt-0.5 text-[11px] opacity-90">Bridge log · Pending queue · Session</div>
           <div className="mt-2 flex gap-1.5">
             {(Object.keys(PLATFORM_LABEL) as HostPlatform[]).map((p) => (
               <PlatformBtn
@@ -132,7 +132,7 @@ function Section({ title, children }: { title?: React.ReactNode; children: React
 
 function Badge({ tone, children, className = '' }: { tone: Tone; children: React.ReactNode; className?: string }) {
   return (
-    <span className={`inline-block rounded-full px-1.5 py-[2px] text-[10px] font-extrabold tracking-[0.4px] ${TONE_CLASSES[tone]} ${className}`}>
+    <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-extrabold tracking-[0.4px] ${TONE_CLASSES[tone]} ${className}`}>
       {children}
     </span>
   );
@@ -212,7 +212,7 @@ function TextArea({ value, onChange, rows = 4, placeholder }: {
       rows={rows}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full min-h-[84px] resize-y rounded-lg border border-bluegray-100 bg-white p-2 font-mono text-[11px] text-gray-500 focus:border-primary-500 focus:ring-2 focus:ring-primary-50 focus:outline-none"
+      className="w-full min-h-21 resize-y rounded-lg border border-bluegray-100 bg-white p-2 font-mono text-[11px] text-gray-500 focus:border-primary-500 focus:ring-2 focus:ring-primary-50 focus:outline-none"
     />
   );
 }
@@ -226,7 +226,7 @@ function JsonEditor({ value, onChange, onBlur, rows = 4 }: {
       rows={rows}
       onChange={(e) => onChange(e.target.value)}
       onBlur={onBlur ? (e) => onBlur(e.target.value) : undefined}
-      className="w-full min-h-[72px] resize-y rounded-lg border border-bluegray-100 bg-[#f8fafc] p-2 font-mono text-[11px] text-gray-500"
+      className="w-full min-h-18 resize-y rounded-lg border border-bluegray-100 bg-[#f8fafc] p-2 font-mono text-[11px] text-gray-500"
     />
   );
 }
@@ -343,11 +343,11 @@ export const DevPanel: React.FC = () => {
                 disabled={!auto}
                 onChange={(e) => setLatency(Number(e.target.value))}
                 onBlur={(e) => setAutoLatency(Number(e.target.value))}
-                className="w-[84px] rounded-lg border border-bluegray-100 px-2 py-1.5 text-[11px] font-semibold"
+                className="w-21 rounded-lg border border-bluegray-100 px-2 py-1.5 text-[11px] font-semibold"
               />
               <span className="text-[10px] text-gray-100">ms before the callback fires</span>
             </div>
-            <div className="mt-1.5 text-[10px] leading-[1.5] text-gray-100">
+            <div className="mt-1.5 text-[10px] leading-normal text-gray-100">
               {auto
                 ? 'The host resolves every request itself — INIT_APP issues a token + scope for the live registry entry, USER_DETAIL_ACCESS returns the user and wallet balance below, REQUEST_PAYMENT debits that balance and writes a transaction. Switch to Manual to author responses by hand.'
                 : 'Every request waits in the queue below until you fire a response.'}
@@ -426,7 +426,7 @@ export const DevPanel: React.FC = () => {
               <Btn variant="ghost" onClick={() => clearBridgeLog()}>Clear log</Btn>
             </>
           )}>
-            <div className="flex max-h-[260px] flex-col gap-1.5 overflow-y-auto">
+            <div className="flex max-h-65 flex-col gap-1.5 overflow-y-auto">
               {logs.length === 0 ? (
                 <div className="text-[11px] italic text-gray-100">No requests yet.</div>
               ) : (
@@ -439,7 +439,7 @@ export const DevPanel: React.FC = () => {
                     <div className="mt-1 text-[10px] text-gray-300">
                       {r.responded ? `→ ${r.response?.responseType}: ${JSON.stringify(r.response?.response).slice(0, 140)}` : '… pending'}
                     </div>
-                    <div className="mt-[2px] text-[9px] text-gray-100">{new Date(r.timestamp).toLocaleTimeString()}</div>
+                    <div className="mt-0.5 text-[9px] text-gray-100">{new Date(r.timestamp).toLocaleTimeString()}</div>
                   </LogItem>
                 ))
               )}
@@ -457,7 +457,7 @@ export const DevPanel: React.FC = () => {
                 No payments settled yet. REQUEST_PAYMENT debits the wallet balance and lands here; VALIDATE_TRANSACTION resolves against it.
               </div>
             ) : (
-              <div className="flex max-h-[200px] flex-col gap-1.5 overflow-y-auto">
+              <div className="flex max-h-50 flex-col gap-1.5 overflow-y-auto">
                 {transactions.map((t) => (
                   <LogItem key={t.transaction_uuid}>
                     <div className="flex justify-between gap-1.5">
@@ -468,7 +468,7 @@ export const DevPanel: React.FC = () => {
                       {t.refId} · {t.transaction_uuid}
                       {t.product_code ? ` · ${t.product_code}` : ''}
                     </div>
-                    <div className="mt-[2px] text-[9px] text-gray-100">{new Date(t.timestamp).toLocaleTimeString()}</div>
+                    <div className="mt-0.5 text-[9px] text-gray-100">{new Date(t.timestamp).toLocaleTimeString()}</div>
                   </LogItem>
                 ))}
               </div>
@@ -553,7 +553,7 @@ export const DevPanel: React.FC = () => {
             </div>
           </Section>
 
-          <div className="px-[2px] pt-2 pb-3 text-[10px] leading-[1.5] text-gray-100">
+          <div className="px-0.5 pt-2 pb-3 text-[10px] leading-normal text-gray-100">
             Real contract: Host calls <code>window.Android[callbackKey](JSON.stringify(payload))</code> where success is <code>{'{ token, scope ... }'}</code> and error is <code>{'{ error_message }'}</code>. Scope is stored on INIT_APP success; out-of-scope requests are refused. In Auto mode the host resolves this from the state above — in Manual mode you author it here.
           </div>
         </div>
