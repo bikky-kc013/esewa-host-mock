@@ -142,7 +142,7 @@ export const DiscoveryFeed: React.FC<DiscoveryFeedProps> = ({ onLaunchMiniApp, o
             <img
               src="https://esewa.com.np/common/images/esewa_logo.png"
               alt="eSewa"
-              className=" object-cover"
+              className="object-contain"
               onError={(e) => (e.target as HTMLImageElement).style.display = 'none'}
             />
           </a>
@@ -167,18 +167,15 @@ export const DiscoveryFeed: React.FC<DiscoveryFeedProps> = ({ onLaunchMiniApp, o
       </header>
 
       {/* SubNav — white secondary nav under the dark header (real eSewa has this) */}
-      <nav className="overflow-x-auto whitespace-nowrap border-b border-bluegray-100 bg-white py-2">
-        <div className="mx-auto flex gap-4.5 max-w-290 px-5 text-[13px] font-semibold text-gray-500">
+      <nav className="overflow-x-auto whitespace-nowrap border-b border-bluegray-100 bg-primary-500 py-2">
+        <div className="mx-auto flex gap-4.5 max-w-290 px-5 text-[13px] font-semibold">
           {(
             [
-              { label: 'Home', active: true },
+              // { label: 'Home', active: true },
               { label: 'Top Up' },
               { label: 'Electricity' },
-              { label: 'Khanepani' },
-              { label: 'Internet' },
+              { label: 'Internet Bills' },
               { label: 'Airlines' },
-              { label: 'Bus' },
-              { label: 'Insurance' },
             ] as { label: string; active?: boolean }[]
           ).map((t) => (
             <a
@@ -186,7 +183,7 @@ export const DiscoveryFeed: React.FC<DiscoveryFeedProps> = ({ onLaunchMiniApp, o
               title={t.label}
               href="#"
               onClick={(e) => e.preventDefault()}
-              className={`px-1 py-1 border-b-2 text-gray-500 ${t.active ? 'border-primary-500 text-primary-500' : 'border-transparent'}`}
+              className={`px-1 py-1 border-b-2 text-white ${t.active ? 'border-primary-500 text-primary-500' : 'border-transparent'}`}
             >
               {t.label}
             </a>
