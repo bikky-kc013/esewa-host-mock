@@ -377,10 +377,6 @@ export const DiscoveryFeed: React.FC<DiscoveryFeedProps> = ({ onLaunchMiniApp, o
           <ToggleNav>☰</ToggleNav>
           <Brand href="#" onClick={(e) => e.preventDefault()}>
             <img src="https://esewa.com.np/common/images/esewa_logo.png" alt="eSewa" onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
-            <span style={{ display: 'inline-flex', flexDirection: 'column', lineHeight: 1 }}>
-              <span>eSewa</span>
-              <small>Pay • Send • Receive</small>
-            </span>
           </Brand>
           <SearchWrap>
             <span aria-hidden>🔍</span>

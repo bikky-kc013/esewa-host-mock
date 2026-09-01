@@ -1,8 +1,10 @@
 /**
  * DevPanel.tsx — collapsible side drawer per spec
+ *  - host mode switch: Auto (host answers by itself) vs Manual (author each response)
  *  - live log of every outgoing bridge request
  *  - form to author mocked response for each pending request and fire *_CALLBACK
  *  - current simulated user/session state (token, user, product, merchant) with editable JSON
+ *  - transaction ledger of every payment the host has settled this session
  *  - platform picker (Android / iOS / Flutter)
  */
 
@@ -14,12 +16,20 @@ import {
   getPendingRequests,
   getSessionState,
   setSessionState,
+  getTransactions,
+  clearTransactions,
   fireResponse,
   clearBridgeLog,
   DEFAULT_RESPONSES,
-  REQUEST_TYPE_ENUM,
 } from './bridge';
 import type { BridgeRequest, SessionState } from './bridge';
+import {
+  getAutoLatency,
+  isAutoRespondEnabled,
+  setAutoLatency,
+  setAutoRespondEnabled,
+} from './autoResponder';
+import type { HostTransaction } from './autoResponder';
 import { getStoredPlatform, setStoredPlatform, PLATFORM_LABEL } from './platform';
 import type { HostPlatform } from './platform';
 
@@ -189,6 +199,18 @@ const Btn = styled.button<{ $variant?: 'primary' | 'ghost' | 'danger' }>`
   &:disabled { opacity: 0.5; cursor: not-allowed; }
 `;
 
+const ModeBtn = styled.button<{ $active: boolean }>`
+  flex: 1;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid ${(p) => (p.$active ? primary[500] : bluegray[100])};
+  background: ${(p) => (p.$active ? primary[50] : white)};
+  color: ${(p) => (p.$active ? primary[600] : gray[300])};
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+`;
+
 const JsonEditor = styled.textarea`
   width: 100%;
   min-height: 72px;
@@ -208,11 +230,15 @@ export const DevPanel: React.FC = () => {
   const [session, setSession] = useState<SessionState>(getSessionState());
   const [platform, setPlatform] = useState<HostPlatform>(getStoredPlatform());
   const [drafts, setDrafts] = useState<Record<string, { json: string; responseType: 'success' | 'error' }>>({});
+  const [transactions, setTransactions] = useState<HostTransaction[]>(getTransactions());
+  const [auto, setAuto] = useState<boolean>(isAutoRespondEnabled());
+  const [latency, setLatency] = useState<number>(getAutoLatency());
 
   const refresh = useCallback(() => {
     setLogs(getBridgeRequests());
     setPending(getPendingRequests());
     setSession(getSessionState());
+    setTransactions(getTransactions());
   }, []);
 
   useEffect(() => {
@@ -220,13 +246,19 @@ export const DevPanel: React.FC = () => {
     const onLog = () => refresh();
     const onPending = () => refresh();
     const onSession = () => refresh();
+    const onAuto = () => {
+      setAuto(isAutoRespondEnabled());
+      setLatency(getAutoLatency());
+    };
     window.addEventListener('esewaHostLogUpdate', onLog);
     window.addEventListener('esewaHostPendingUpdate', onPending);
     window.addEventListener('esewaHostSessionUpdate', onSession);
+    window.addEventListener('esewaHostAutoModeUpdate', onAuto);
     return () => {
       window.removeEventListener('esewaHostLogUpdate', onLog);
       window.removeEventListener('esewaHostPendingUpdate', onPending);
       window.removeEventListener('esewaHostSessionUpdate', onSession);
+      window.removeEventListener('esewaHostAutoModeUpdate', onAuto);
     };
   }, [refresh]);
 
@@ -266,11 +298,17 @@ export const DevPanel: React.FC = () => {
 
   const handleSessionSave = (key: keyof SessionState, raw: string) => {
     let parsed: any = raw;
-    // try parse if looks like JSON
     const trimmed = raw.trim();
-    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']')) || trimmed.startsWith('"')) {
+    if (key === 'balance') {
+      const n = Number(trimmed);
+      parsed = isNaN(n) ? 0 : n;
+    } else if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']')) || trimmed.startsWith('"')) {
       try { parsed = JSON.parse(raw); } catch { /* keep raw */ }
     } else if (trimmed === 'null') parsed = null;
+    else {
+      // allow numeric JSON like 12480
+      try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+    }
     setSessionState({ [key]: parsed } as any);
   };
 
@@ -309,6 +347,38 @@ export const DevPanel: React.FC = () => {
         </Header>
 
         <Body>
+          {/* Host mode — auto vs manual */}
+          <Section>
+            <SectionLabel>Host mode</SectionLabel>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <ModeBtn $active={auto} onClick={() => { setAuto(true); setAutoRespondEnabled(true); }}>
+                Auto — host answers
+              </ModeBtn>
+              <ModeBtn $active={!auto} onClick={() => { setAuto(false); setAutoRespondEnabled(false); }}>
+                Manual — I answer
+              </ModeBtn>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: gray[500] }}>latency</span>
+              <input
+                type="number"
+                min={0}
+                step={50}
+                value={latency}
+                disabled={!auto}
+                onChange={(e) => setLatency(Number(e.target.value))}
+                onBlur={(e) => setAutoLatency(Number(e.target.value))}
+                style={{ width: 84, border: `1px solid ${bluegray[100]}`, borderRadius: 8, padding: '6px 8px', fontSize: 11, fontWeight: 600 }}
+              />
+              <span style={{ fontSize: 10, color: gray[100] }}>ms before the callback fires</span>
+            </div>
+            <div style={{ fontSize: 10, color: gray[100], marginTop: 6, lineHeight: 1.5 }}>
+              {auto
+                ? 'The host resolves every request itself — INIT_APP issues a token + scope for the live registry entry, USER_DETAIL_ACCESS returns the user and wallet balance below, REQUEST_PAYMENT debits that balance and writes a transaction. Switch to Manual to author responses by hand.'
+                : 'Every request waits in the queue below until you fire a response.'}
+            </div>
+          </Section>
+
           {/* Pending Queue */}
           <Section>
             <SectionLabel>
@@ -318,7 +388,11 @@ export const DevPanel: React.FC = () => {
               </span>
             </SectionLabel>
             {pending.length === 0 ? (
-              <div style={{ fontSize: 11, color: gray[100], fontStyle: 'italic' }}>No pending callbacks. Trigger a Mini App action.</div>
+              <div style={{ fontSize: 11, color: gray[100], fontStyle: 'italic' }}>
+                {auto
+                  ? 'Nothing waiting — the host is answering automatically. See the live log below.'
+                  : 'No pending callbacks. Trigger a Mini App action.'}
+              </div>
             ) : (
               pending.map((p) => {
                 const d = drafts[p.id];
@@ -383,6 +457,35 @@ export const DevPanel: React.FC = () => {
             </div>
           </Section>
 
+          {/* Transactions */}
+          <Section>
+            <SectionLabel>
+              Transactions ({transactions.length})
+              <Btn $variant="ghost" onClick={() => clearTransactions()}>Clear</Btn>
+            </SectionLabel>
+            {transactions.length === 0 ? (
+              <div style={{ fontSize: 11, color: gray[100], fontStyle: 'italic' }}>
+                No payments settled yet. REQUEST_PAYMENT debits the wallet balance and lands here; VALIDATE_TRANSACTION resolves against it.
+              </div>
+            ) : (
+              <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {transactions.map((t) => (
+                  <LogItem key={t.transaction_uuid}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+                      <Badge $tone={t.status === 'COMPLETE' ? 'green' : t.status === 'FAILED' ? 'red' : 'orange'}>{t.status}</Badge>
+                      <b style={{ fontSize: 11, color: gray[500] }}>Rs {t.amount.toLocaleString('en-IN')}</b>
+                    </div>
+                    <div style={{ fontSize: 10, color: gray[300], marginTop: 4, wordBreak: 'break-all' }}>
+                      {t.refId} · {t.transaction_uuid}
+                      {t.product_code ? ` · ${t.product_code}` : ''}
+                    </div>
+                    <div style={{ fontSize: 9, color: gray[100], marginTop: 2 }}>{new Date(t.timestamp).toLocaleTimeString()}</div>
+                  </LogItem>
+                ))}
+              </div>
+            )}
+          </Section>
+
           {/* Session State */}
           <Section>
             <SectionLabel>Session state — editable JSON</SectionLabel>
@@ -400,15 +503,43 @@ export const DevPanel: React.FC = () => {
                   <Btn $variant="ghost" onClick={() => handleSessionSave('token', 'null')}>Clear</Btn>
                 </div>
               </div>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: gray[500], marginBottom: 4 }}>balance — wallet NPR (host → mini-app)</div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <input
+                    type="number"
+                    value={session.balance ?? 0}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10)
+                      setSession((s) => ({ ...s, balance: isNaN(v) ? 0 : v }))
+                    }}
+                    onBlur={(e) => {
+                      const v = parseInt(e.target.value, 10)
+                      const bal = isNaN(v) ? 0 : v
+                      // keep user.balance in sync for USER_DETAIL response
+                      const curUser = (session.user as Record<string, unknown>) || {}
+                      const nextUser = { ...curUser, balance: bal }
+                      handleSessionSave('balance', String(bal))
+                      handleSessionSave('user', JSON.stringify(nextUser))
+                    }}
+                    style={{ flex: 1, border: `1px solid ${bluegray[100]}`, borderRadius: 8, padding: '6px 8px', fontSize: 11, fontWeight: 600 }}
+                  />
+                  <span style={{ fontSize: 11, color: gray[100] }}>NPR</span>
+                  <Btn $variant="ghost" onClick={() => { handleSessionSave('balance', '12480'); handleSessionSave('user', JSON.stringify({ ...(session.user as object), balance: 12480 })); setSession((s) => ({ ...s, balance: 12480, user: { ...(s.user as object), balance: 12480 } } as never)) }}>Reset 12,480</Btn>
+                  <Btn $variant="ghost" onClick={() => { handleSessionSave('balance', '500'); handleSessionSave('user', JSON.stringify({ ...(session.user as object), balance: 500 })); setSession((s) => ({ ...s, balance: 500, user: { ...(s.user as object), balance: 500 } } as never)) }}>Set 500 (test insufficient)</Btn>
+                </div>
+                <div style={{ fontSize: 10, color: gray[100], marginTop: 4 }}>Mini-app reads this via USER_DETAIL_ACCESS → balance. If balance &lt; pack price, host will respond error and mini-app shows insufficient.</div>
+              </div>
               <EditableJsonBlock label="grantedScope (INIT_APP scope[])" value={session.grantedScope} onSave={(v) => handleSessionSave('grantedScope', v)} />
-              <EditableJsonBlock label="user (USER_DETAIL_ACCESS)" value={session.user} onSave={(v) => handleSessionSave('user', v)} />
+              <EditableJsonBlock label="user (USER_DETAIL_ACCESS) — includes balance" value={session.user} onSave={(v) => handleSessionSave('user', v)} />
+              <EditableJsonBlock label="location (LOCATION_ACCESS)" value={session.location} onSave={(v) => handleSessionSave('location', v)} />
               <EditableJsonBlock label="product (GET_PRODUCT)" value={session.product} onSave={(v) => handleSessionSave('product', v)} />
               <EditableJsonBlock label="merchant (MERCHANT_DETAIL)" value={session.merchant} onSave={(v) => handleSessionSave('merchant', v)} />
             </div>
           </Section>
 
           <div style={{ fontSize: 10, color: gray[100], padding: '8px 2px 12px', lineHeight: 1.5 }}>
-            Real contract: Host calls <code>window.Android[callbackKey](JSON.stringify(payload))</code> where success is <code>{'{'}token, scope...{'}'}</code> and error is <code>{'{'}error_message{'}'}</code>. Scope is stored on INIT_APP success; out-of-scope requests auto-prefill error.
+            Real contract: Host calls <code>window.Android[callbackKey](JSON.stringify(payload))</code> where success is <code>{'{'}token, scope...{'}'}</code> and error is <code>{'{'}error_message{'}'}</code>. Scope is stored on INIT_APP success; out-of-scope requests are refused. In Auto mode the host resolves this from the state above — in Manual mode you author it here.
           </div>
         </Body>
       </Drawer>
