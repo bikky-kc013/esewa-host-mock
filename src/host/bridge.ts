@@ -73,7 +73,7 @@ export type SessionState = {
 };
 
 
-const currentLocation = await getCurrentLocation()
+const currentLocation = getCurrentLocation();
 
 
 const MAX_LOG = 100;
@@ -105,7 +105,7 @@ let sessionState: SessionState = {
     contact: '9800000000',
     email: 'merchant@mock.com.np',
   },
-  location: { ...currentLocation },
+    location: { address: 'Kathmandu, Nepal', latitude: 27.7172, longitude: 85.324, accuracy: 15 },
   balance: 12480,
   transactions: [],
 };
@@ -496,12 +496,8 @@ export const DEFAULT_RESPONSES: Record<string, any> = {
     balance: 12480,
     currency: 'NPR',
   },
-  [REQUEST_TYPE_ENUM.LOCATION_ACCESS]: {
-    latitude: currentLocation.latitude,
-    longitude: currentLocation.longitude,
-    accuracy:currentLocation.accuracy,
-    address: currentLocation.address,
-  },
+   [REQUEST_TYPE_ENUM.LOCATION_ACCESS]: { ...currentLocation
+   },
   [REQUEST_TYPE_ENUM.MEDIA_ACCESS]: {
     media:
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=',
@@ -718,7 +714,7 @@ export function resetBridge(): void {
       contact: '9800000000',
       email: 'merchant@mock.com.np',
     },
-    location: { ...DEFAULT_LOCATION },
+    location: { address: 'Kathmandu, Nepal', latitude: 27.7172, longitude: 85.324 },
     balance: 12480,
     transactions: [],
   };

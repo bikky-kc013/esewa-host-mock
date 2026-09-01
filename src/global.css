@@ -1,1 +1,93 @@
 @import "tailwindcss";
+
+/* thin scrollbar for phone content area (was ContentArea::-webkit-scrollbar)
+   — kept as a small custom CSS block since Tailwind needs the pseudo-element. */
+.phone-content-scroll {
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--color-bluegray-200);
+    border-radius: 4px;
+  }
+}
+
+/* eSewa UI design tokens exposed as Tailwind v4 theme colors, so the host chrome
+   can use token utilities like bg-primary-500 / border-bluegray-100 / text-gray-500.
+   Values are copied verbatim from src/host/tokens.ts (verified against the
+   esewa-ui-library CSS palette). Keep in sync when tokens change. */
+@theme {
+  /* primary (brand green) */
+  --color-primary-50: #E7F8E3;
+  --color-primary-100: #D4F1CC;
+  --color-primary-200: #BFEBB3;
+  --color-primary-300: #74D359;
+  --color-primary-400: #69CF4D;
+  --color-primary-500: #29BB00;
+  --color-primary-600: #26AC00;
+  --color-primary-700: #25A800;
+  --color-primary-800: #219600;
+  --color-primary-900: #104B00;
+
+  /* gray */
+  --color-gray-25: #F8F8F8;
+  --color-gray-35: #E8E9EA;
+  --color-gray-50: #CFD1D3;
+  --color-gray-100: #5E646B;
+  --color-gray-200: #495158;
+  --color-gray-300: #333B43;
+  --color-gray-400: #2C343D;
+  --color-gray-500: #1C252E;
+  --color-gray-600: #192129;
+  --color-gray-700: #161E25;
+  --color-gray-800: #141A20;
+  --color-gray-900: #080B0E;
+
+  /* blue (body background #F5FAFF) */
+  --color-blue-50: #F5FAFF;
+  --color-blue-100: #E6F3FF;
+  --color-blue-200: #C5E3FF;
+  --color-blue-300: #9DD0FE;
+  --color-blue-400: #63B5FE;
+  --color-blue-500: #3CA2FE;
+  --color-blue-600: #3692E4;
+  --color-blue-700: #3081CB;
+  --color-blue-800: #246198;
+  --color-blue-900: #12314C;
+
+  /* red (danger) */
+  --color-red-50: #FCF5F4;
+  --color-red-100: #F9EBEA;
+  --color-red-200: #ECC4BF;
+  --color-red-300: #DF9C95;
+  --color-red-400: #CD6155;
+  --color-red-500: #C03A2B;
+  --color-red-600: #AD3427;
+  --color-red-700: #9A2E22;
+  --color-red-800: #601D15;
+  --color-red-900: #260C09;
+
+  /* orange (warning) */
+  --color-orange-50: #FDF9F3;
+  --color-orange-100: #FBEEDF;
+  --color-orange-200: #F5D9B5;
+  --color-orange-300: #EEBF83;
+  --color-orange-400: #E59939;
+  --color-orange-500: #DE7F07;
+  --color-orange-600: #C87206;
+  --color-orange-700: #B26606;
+  --color-orange-800: #593303;
+  --color-orange-900: #432602;
+
+  /* bluegray (borders / muted chrome) */
+  --color-bluegray-50: #F7F8F9;
+  --color-bluegray-100: #EEF0F2;
+  --color-bluegray-200: #ABB5BF;
+  --color-bluegray-300: #8897A5;
+  --color-bluegray-400: #798999;
+  --color-bluegray-500: #576C80;
+  --color-bluegray-600: #4E6173;
+  --color-bluegray-700: #465666;
+  --color-bluegray-800: #3D4C5A;
+  --color-bluegray-900: #34414D;
+}
